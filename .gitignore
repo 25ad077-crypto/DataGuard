@@ -1,0 +1,15 @@
+# RStudio temporary files
+.Rhistory
+.RData
+.Ruserdata
+.Rproj.user/
+
+# Generated reports and charts
+reports/*
+!reports/.gitkeep
+plots/*
+!plots/.gitkeep
+
+# Operating system files
+.DS_Store
+Thumbs.db

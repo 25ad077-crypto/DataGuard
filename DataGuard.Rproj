@@ -1,13 +1,373 @@
-Version: 1.0
+# ============================================================
+# DATAGUARD: AUTOMATED DATA QUALITY AND DRIFT DETECTION
+# Version 1.0 | Beginner-friendly R project
+# ============================================================
 
-RestoreWorkspace: Default
-SaveWorkspace: Default
-AlwaysSaveHistory: Default
+cat("\n========================================\n")
+cat("   DATAGUARD - DATA QUALITY MONITOR\n")
+cat("========================================\n\n")
 
-EnableCodeIndexing: Yes
-UseSpacesForTab: Yes
-NumSpacesForTab: 2
-Encoding: UTF-8
+# 1. CREATE PROJECT FOLDERS
+for (folder in c("data", "reports", "plots")) {
+  dir.create(folder, showWarnings = FALSE, recursive = TRUE)
+}
 
-RnwWeave: Sweave
-LaTeX: pdfLaTeX
+# 2. CREATE SAMPLE DATASETS FOR FIRST-TIME EXECUTION
+set.seed(42)
+
+if (!file.exists("data/reference.csv")) {
+  reference <- data.frame(
+    customer_id = 1:200,
+    age = sample(18:65, 200, replace = TRUE),
+    income = round(rnorm(200, 35000, 8000)),
+    city = sample(c("Chennai", "Coimbatore", "Madurai"),
+                  200, replace = TRUE),
+    spending_score = sample(1:100, 200, replace = TRUE)
+  )
+  
+  write.csv(reference, "data/reference.csv", row.names = FALSE)
+}
+
+if (!file.exists("data/new_data.csv")) {
+  new_data <- read.csv("data/reference.csv")
+  
+  # Simulate realistic data-quality issues
+  new_data$age[c(5, 18, 35)] <- NA
+  new_data$income <- round(new_data$income + 12000)
+  new_data$city[10] <- "Unknown City"
+  new_data$spending_score[20] <- 150
+  
+  # Add duplicate rows
+  new_data <- rbind(new_data, new_data[1:5, ])
+  
+  write.csv(new_data, "data/new_data.csv", row.names = FALSE)
+}
+
+# 3. LOAD DATA
+reference <- read.csv("data/reference.csv")
+new_data <- read.csv("data/new_data.csv")
+
+cat("Reference rows:", nrow(reference), "\n")
+cat("New data rows:", nrow(new_data), "\n\n")
+
+# 4. CONFIGURABLE VALIDATION RULES
+required_columns <- c(
+  "customer_id", "age", "income", "city", "spending_score"
+)
+
+numeric_ranges <- list(
+  age = c(18, 100),
+  income = c(0, 1000000),
+  spending_score = c(1, 100)
+)
+
+allowed_categories <- list(
+  city = c("Chennai", "Coimbatore", "Madurai")
+)
+
+allow_extra_columns <- TRUE
+
+# 5. INITIALIZE ISSUE REPORT
+issues <- data.frame(
+  check = character(),
+  column = character(),
+  severity = character(),
+  details = character(),
+  stringsAsFactors = FALSE
+)
+
+add_issue <- function(check, column, severity, details) {
+  issues <<- rbind(issues, data.frame(
+    check = check,
+    column = column,
+    severity = severity,
+    details = details,
+    stringsAsFactors = FALSE
+  ))
+}
+
+# 6. SCHEMA VALIDATION
+missing_columns <- setdiff(required_columns, names(new_data))
+extra_columns <- setdiff(names(new_data), names(reference))
+
+if (length(missing_columns) == 0) {
+  cat("Schema validation: PASSED\n")
+} else {
+  cat("Schema validation: FAILED\n")
+  add_issue("Schema", "Multiple", "CRITICAL",
+            paste("Missing columns:", paste(missing_columns,
+                                            collapse = ", ")))
+}
+
+if (!allow_extra_columns && length(extra_columns) > 0) {
+  add_issue("Schema", "Multiple", "WARNING",
+            paste("Unexpected columns:",
+                  paste(extra_columns, collapse = ", ")))
+}
+
+# 7. MISSING-VALUE ANALYSIS
+missing_count <- sum(is.na(new_data))
+total_cells <- length(new_data)
+missing_pct <- 100 * missing_count / max(1, total_cells)
+
+missing_by_column <- data.frame(
+  column = names(new_data),
+  missing_count = colSums(is.na(new_data)),
+  missing_percent = round(
+    100 * colSums(is.na(new_data)) / max(1, nrow(new_data)), 2
+  )
+)
+
+for (column in names(new_data)) {
+  count <- sum(is.na(new_data[[column]]))
+  
+  if (count > 0) {
+    severity <- if (column %in% required_columns) {
+      "WARNING"
+    } else {
+      "INFO"
+    }
+    
+    add_issue("Missing Values", column, severity,
+              paste(count, "missing values"))
+  }
+}
+
+# 8. DUPLICATE ROW DETECTION
+duplicate_count <- sum(duplicated(new_data))
+duplicate_pct <- 100 * duplicate_count / max(1, nrow(new_data))
+
+if (duplicate_count > 0) {
+  add_issue("Duplicates", "All columns", "WARNING",
+            paste(duplicate_count, "duplicate rows"))
+}
+
+# 9. NUMERIC RANGE VALIDATION
+invalid_count <- 0
+
+for (column in names(numeric_ranges)) {
+  if (column %in% names(new_data)) {
+    values <- new_data[[column]]
+    
+    if (!is.numeric(values)) {
+      add_issue("Data Type", column, "CRITICAL",
+                "Expected a numeric column")
+      invalid_count <- invalid_count + sum(!is.na(values))
+    } else {
+      limits <- numeric_ranges[[column]]
+      
+      bad <- !is.na(values) &
+        (values < limits[1] | values > limits[2])
+      
+      invalid_count <- invalid_count + sum(bad)
+      
+      if (any(bad)) {
+        add_issue("Range Check", column, "WARNING",
+                  paste(sum(bad), "values outside",
+                        limits[1], "to", limits[2]))
+      }
+    }
+  }
+}
+
+# 10. PERMITTED CATEGORY VALIDATION
+for (column in names(allowed_categories)) {
+  if (column %in% names(new_data)) {
+    values <- as.character(new_data[[column]])
+    
+    bad <- !is.na(values) &
+      !(values %in% allowed_categories[[column]])
+    
+    if (any(bad)) {
+      invalid_count <- invalid_count + sum(bad)
+      
+      add_issue("Category Check", column, "WARNING",
+                paste(sum(bad), "unpermitted category values"))
+    }
+  }
+}
+
+# 11. DATA-DRIFT DETECTION
+drift_results <- data.frame(
+  column = character(),
+  test = character(),
+  reference_value = numeric(),
+  new_value = numeric(),
+  difference = numeric(),
+  alert = logical(),
+  stringsAsFactors = FALSE
+)
+
+for (column in intersect(names(reference), names(new_data))) {
+  
+  old <- reference[[column]]
+  new <- new_data[[column]]
+  
+  # Compare missing-value rates
+  old_missing <- mean(is.na(old))
+  new_missing <- mean(is.na(new))
+  
+  missing_shift <- abs(new_missing - old_missing)
+  
+  if (missing_shift > 0.05) {
+    add_issue("Missingness Drift", column, "WARNING",
+              paste("Missing rate changed by",
+                    round(100 * missing_shift, 2), "percentage points"))
+  }
+  
+  # Numeric distribution drift using the KS test
+  if (is.numeric(old) && is.numeric(new)) {
+    
+    old_values <- old[is.finite(old)]
+    new_values <- new[is.finite(new)]
+    
+    if (length(old_values) >= 2 && length(new_values) >= 2) {
+      test_result <- tryCatch(
+        suppressWarnings(ks.test(old_values, new_values)),
+        error = function(e) NULL
+      )
+      
+      if (!is.null(test_result)) {
+        drift_detected <- test_result$p.value < 0.05
+        
+        drift_results <- rbind(drift_results, data.frame(
+          column = column,
+          test = "KS test",
+          reference_value = mean(old_values),
+          new_value = mean(new_values),
+          difference = mean(new_values) - mean(old_values),
+          alert = drift_detected
+        ))
+        
+        if (drift_detected) {
+          add_issue("Distribution Drift", column, "WARNING",
+                    paste("KS test p-value:",
+                          signif(test_result$p.value, 3)))
+        }
+      }
+    }
+    
+  } else if (is.character(old) || is.factor(old) ||
+             is.character(new) || is.factor(new)) {
+    
+    old_values <- as.character(old)
+    new_values <- as.character(new)
+    
+    old_values <- old_values[!is.na(old_values)]
+    new_values <- new_values[!is.na(new_values)]
+    
+    categories <- union(unique(old_values), unique(new_values))
+    
+    if (length(old_values) > 0 && length(new_values) > 0) {
+      old_prop <- prop.table(table(factor(
+        old_values, levels = categories
+      )))
+      new_prop <- prop.table(table(factor(
+        new_values, levels = categories
+      )))
+      
+      difference <- max(abs(as.numeric(old_prop) -
+                              as.numeric(new_prop)))
+      
+      drift_detected <- difference > 0.15
+      
+      drift_results <- rbind(drift_results, data.frame(
+        column = column,
+        test = "Category proportion",
+        reference_value = NA_real_,
+        new_value = NA_real_,
+        difference = difference,
+        alert = drift_detected
+      ))
+      
+      if (drift_detected) {
+        add_issue("Category Drift", column, "WARNING",
+                  paste("Maximum category proportion change:",
+                        round(difference, 3)))
+      }
+    }
+  }
+}
+
+# 12. CALCULATE DATA-QUALITY SCORE
+schema_penalty <- if (length(missing_columns) > 0) 20 else 0
+
+quality_score <- max(0, round(
+  100 - missing_pct - duplicate_pct -
+    2 * invalid_count - schema_penalty
+))
+
+# 13. PRINT SCORECARD
+cat("\n========== QUALITY SCORECARD ==========\n")
+cat("Overall quality score:", quality_score, "/100\n")
+cat("Missing cells:", missing_count,
+    "(", round(missing_pct, 2), "%)\n")
+cat("Duplicate rows:", duplicate_count, "\n")
+cat("Invalid values:", invalid_count, "\n")
+cat("Schema validation:",
+    if (length(missing_columns) == 0) "PASSED" else "FAILED",
+    "\n")
+cat("Drift alerts:", sum(drift_results$alert), "\n")
+
+if (quality_score >= 90) {
+  cat("Quality status: GOOD\n")
+} else if (quality_score >= 70) {
+  cat("Quality status: WARNING\n")
+} else {
+  cat("Quality status: POOR\n")
+}
+
+# 14. SAVE REPORTS
+write.csv(issues, "reports/quality_issues.csv", row.names = FALSE)
+write.csv(missing_by_column,
+          "reports/missing_value_report.csv", row.names = FALSE)
+write.csv(drift_results,
+          "reports/drift_report.csv", row.names = FALSE)
+
+scorecard <- data.frame(
+  run_time = as.character(Sys.time()),
+  rows = nrow(new_data),
+  columns = ncol(new_data),
+  quality_score = quality_score,
+  missing_cells = missing_count,
+  duplicate_rows = duplicate_count,
+  invalid_values = invalid_count,
+  schema_status = if (length(missing_columns) == 0) {
+    "PASSED"
+  } else {
+    "FAILED"
+  },
+  drift_alerts = sum(drift_results$alert)
+)
+
+write.csv(scorecard, "reports/scorecard.csv", row.names = FALSE)
+
+# Append an audit log for every run
+audit_file <- "reports/audit_log.csv"
+
+if (!file.exists(audit_file)) {
+  write.csv(scorecard, audit_file, row.names = FALSE)
+} else {
+  write.table(scorecard, audit_file, sep = ",",
+              row.names = FALSE, col.names = FALSE,
+              append = TRUE)
+}
+
+# 15. CREATE QUALITY CHART
+png("plots/quality_score.png", width = 900, height = 600)
+
+barplot(
+  quality_score,
+  names.arg = "Data Quality",
+  ylim = c(0, 100),
+  main = "DataGuard Quality Score",
+  ylab = "Score out of 100"
+)
+
+abline(h = 90, lty = 2)
+
+dev.off()
+
+cat("\nReports saved in the reports/ folder.\n")
+cat("Chart saved in the plots/ folder.\n")
+cat("\nDataGuard execution completed!\n")

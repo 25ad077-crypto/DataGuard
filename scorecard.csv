@@ -1,0 +1,2 @@
+"run_time","rows","columns","quality_score","missing_cells","duplicate_rows","invalid_values","schema_status","drift_alerts"
+"2026-10-15 01:46:19.345819",205,5,14,4,5,2,"PASSED",1

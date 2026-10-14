@@ -1,0 +1,6 @@
+"column","test","reference_value","new_value","difference","alert"
+"customer_id","KS test",100.5,98.1219512195122,-2.3780487804878,FALSE
+"age","KS test",42,41.6417910447761,-0.35820895522388,FALSE
+"income","KS test",34147.745,46117.3414634146,11969.5964634146,TRUE
+"city","Category proportion",NA,NA,0.0048780487804878,FALSE
+"spending_score","KS test",51.525,51.819512195122,0.294512195121953,FALSE

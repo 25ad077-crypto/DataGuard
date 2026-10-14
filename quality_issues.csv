@@ -1,0 +1,6 @@
+"check","column","severity","details"
+"Missing Values","age","WARNING","4 missing values"
+"Duplicates","All columns","WARNING","5 duplicate rows"
+"Range Check","spending_score","WARNING","1 values outside 1 to 100"
+"Category Check","city","WARNING","1 unpermitted category values"
+"Distribution Drift","income","WARNING","KS test p-value: 4.82e-26"
